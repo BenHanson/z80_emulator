@@ -231,9 +231,48 @@ void z80::step(uint8_t* memory)
 		++_PC;
 		break;
 	case 0x27:
+	{
 		// DAA
+		const uint8_t oldA = _curr_reg->_AF.high();
+		const uint8_t oldF = _curr_reg->_AF.low();
+		const bool newC =
+			(oldF & FLAG::C) ||
+			(!(oldF & FLAG::N) && oldA > 0x99);
+		uint8_t adjust = 0;
+		uint8_t flags = _curr_reg->_AF.low();
+
+		if ((oldF & FLAG::H) || ((oldF & FLAG::N) == 0 && (oldA & 0x0F) > 9))
+			adjust |= 0x06;
+
+		if ((oldF & FLAG::C) || ((oldF & FLAG::N) == 0 && oldA > 0x99))
+			adjust |= 0x60;
+
+		const uint8_t A = _curr_reg->_AF.high((oldF & FLAG::N) ?
+			oldA - adjust :
+			oldA + adjust);
+
+		flags &= FLAG::N;
+
+		if (A & 0x80)
+			flags |= FLAG::S;
+
+		if (A == 0)
+			flags |= FLAG::Z;
+
+		if (parity(A))
+			flags |= FLAG::PV;
+
+		if ((oldA ^ A) & 0x10)
+			flags |= FLAG::H;
+
+		if (newC)
+			flags |= FLAG::C;
+
+		flags |= A & (FLAG::BIT3 | FLAG::BIT5);
+		_curr_reg->_AF.low(flags);
 		++_PC;
 		break;
+	}
 	case 0x28:
 		// JR Z, d
 		if (_curr_reg->_AF.low() & FLAG::Z)
@@ -1276,6 +1315,7 @@ void z80::step(uint8_t* memory)
 		// IN A, (n)
 		++_PC;
 
+		// No flags affected
 		++_PC;
 		break;
 	case 0xdc:
@@ -1462,7 +1502,11 @@ void z80::step(uint8_t* memory)
 		break;
 	case 0xf8:
 		// RET M
-		++_PC;
+		if (_curr_reg->_AF.low() & FLAG::S)
+			ret(memory);
+		else
+			++_PC;
+
 		break;
 	case 0xf9:
 		// LD SP, HL
@@ -3318,17 +3362,40 @@ void z80::step_ext(uint8_t* memory)
 	case 0x6c:
 	case 0x74:
 	case 0x7c:
+	{
 		// NEG
-		_curr_reg->_AF.high(0 - _curr_reg->_AF.high());
-		// TODO: set flags
+		const uint8_t A = 0 - _curr_reg->_AF.high();
+		uint8_t flags = 0;
+
+		if (A & 0x80)
+			flags |= FLAG::S;
+
+		if (A == 0)
+			flags |= FLAG::Z;
+
+		if ((_curr_reg->_AF.high() & 0x0F) < (A & 0x0F))
+			flags |= FLAG::H;
+
+		if (_curr_reg->_AF.high() == 0x80)
+			flags |= FLAG::PV;
+
+		flags |= FLAG::N;
+
+		if (_curr_reg->_AF.high() != 0)
+			flags |= FLAG::C;
+
+		_curr_reg->_AF.high(A);
+		_curr_reg->_AF.low(flags);
 		++_PC;
 		break;
+	}
 	case 0x45:
 		// RETN
-		++_PC;
+		ret(memory);
 		break;
 	case 0x46:
 		// IM 0
+		// No flags affected
 		++_PC;
 		break;
 	case 0x47:
@@ -3358,7 +3425,8 @@ void z80::step_ext(uint8_t* memory)
 		break;
 	case 0x4d:
 		// RETI
-		++_PC;
+		ret(memory);
+		// No flags affected
 		break;
 	case 0x4e:
 		// IM 0/1
@@ -3464,9 +3532,31 @@ void z80::step_ext(uint8_t* memory)
 		++_PC;
 		break;
 	case 0x67:
+	{
 		// RRD
+		auto ptr = &memory[_curr_reg->_HL.value()];
+		const uint8_t nybble = *ptr & 0x0f; // lower 4 bits of (HL)
+		uint8_t A = 0;
+		uint8_t F = _curr_reg->_AF.low() & FLAG::C;
+
+		*ptr >>= 4; // Shift high 4 bits to lower 4 bits of (HL)
+		*ptr |= (_curr_reg->_AF.high() & 0x0f) << 4;
+		// Set lower 4 bits of A to lower 4 bits of (HL)
+		A = _curr_reg->_AF.high(_curr_reg->_AF.high() & 0xf0 | nybble);
+
+		if (A & 0x80)
+			F |= FLAG::S;
+
+		if (A == 0)
+			F |= FLAG::Z;
+
+		if (parity(A))
+			F |= FLAG::PV;
+
+		_curr_reg->_AF.low(F);
 		++_PC;
 		break;
+	}
 	case 0x68:
 		// IN L, (C)
 		++_PC;
@@ -3495,9 +3585,31 @@ void z80::step_ext(uint8_t* memory)
 		++_PC;
 		break;
 	case 0x6f:
+	{
 		// RLD
+		auto ptr = &memory[_curr_reg->_HL.value()];
+		const uint8_t AL = _curr_reg->_AF.high() & 0x0f; // lower 4 bits of A
+		// Set low 4 bits of A to high 4 bits of (HL)
+		const uint8_t A =
+			_curr_reg->_AF.high(_curr_reg->_AF.high() & 0xf0 | (*ptr >> 4));
+		uint8_t F = _curr_reg->_AF.low() & FLAG::C;
+
+		*ptr <<= 4; // Shift low 4 bits to high 4 bits of (HL)
+		*ptr |= AL;
+
+		if (A & 0x80)
+			F |= FLAG::S;
+
+		if (A == 0)
+			F |= FLAG::Z;
+
+		if (parity(A))
+			F |= FLAG::PV;
+
+		_curr_reg->_AF.low(F);
 		++_PC;
 		break;
+	}
 	case 0x70:
 		// IN (C)
 		++_PC;
@@ -3553,13 +3665,60 @@ void z80::step_ext(uint8_t* memory)
 		++_PC;
 		break;
 	case 0xa0:
+	{
 		// LDI
+		const uint8_t value = memory[_curr_reg->_HL.value()];
+		// Undocumented X/Y flags come from A + transferred value.
+		const uint8_t sum = _curr_reg->_AF.high() + value;
+		// S, Z and C are unaffected.
+		uint8_t flags = _curr_reg->_AF.low() & (FLAG::S | FLAG::Z | FLAG::C);
+
+		memory[_curr_reg->_DE.value()] = value;
+		++_curr_reg->_HL.value();
+		++_curr_reg->_DE.value();
+		--_curr_reg->_BC.value();
+
+		// P/V is set when BC is non-zero.
+		if (_curr_reg->_BC.value() != 0)
+			flags |= FLAG::PV;
+
+		flags |= sum & (FLAG::BIT3 | FLAG::BIT5);
 		++_PC;
 		break;
+	}
 	case 0xa1:
+	{
 		// CPI
+		const uint8_t value = memory[_curr_reg->_HL.value()];
+		const uint8_t result = _curr_reg->_AF.high() - value;
+		const bool half_borrow =
+			(_curr_reg->_AF.high() & 0x0F) < (value & 0x0F);
+		// Undocumented flags 3 and 5.
+		const uint8_t adjusted = result - (half_borrow ? 1 : 0);
+		// C is preserved.
+		uint8_t flags = _curr_reg->_AF.low() & FLAG::C;
+
+		++_curr_reg->_HL.value();
+		--_curr_reg->_BC.value();
+
+		if (result & 0x80)
+			flags |= FLAG::S;
+
+		if (result == 0)
+			flags |= FLAG::Z;
+
+		if (half_borrow)
+			flags |= FLAG::H;
+
+		if (_curr_reg->_BC.value() != 0)
+			flags |= FLAG::PV;
+
+		flags |= FLAG::N;
+		flags |= adjusted & (FLAG::BIT3 | FLAG::BIT5);
+		_curr_reg->_AF.low(flags);
 		++_PC;
 		break;
+	}
 	case 0xa2:
 		// INI
 		++_PC;
@@ -3569,13 +3728,59 @@ void z80::step_ext(uint8_t* memory)
 		++_PC;
 		break;
 	case 0xa8:
+	{
 		// LDD
+		const uint8_t value = memory[_curr_reg->_HL.value()];
+		uint8_t flags = _curr_reg->_AF.low() & (FLAG::S | FLAG::Z | FLAG::C);
+
+		memory[_curr_reg->_DE.value()] = value;
+
+		--_curr_reg->_HL.value();
+		--_curr_reg->_DE.value();
+		--_curr_reg->_BC.value();
+
+		// P/V indicates whether BC is non-zero.
+		if (_curr_reg->_BC.value() != 0)
+			flags |= FLAG::PV;
+
+		// Undocumented flags:
+		// X = bit 3 of A + value
+		// Y = bit 5 of A + value
+		const uint8_t sum = _curr_reg->_AF.high() + value;
+
+		flags = (flags & ~(FLAG::BIT3 | FLAG::BIT5)) |
+			(sum & (FLAG::BIT3 | FLAG::BIT5));
 		++_PC;
 		break;
+	}
 	case 0xa9:
+	{
 		// CPD
+		const uint8_t value = memory[_curr_reg->_HL.value()];
+		const uint8_t result = _curr_reg->_AF.high() - value;
+		const uint8_t half_borrow =
+			(_curr_reg->_AF.high() & 0x0F) < (value & 0x0F);
+		// Undocumented flags 3 and 5.
+		const uint8_t adjusted = result - (half_borrow ? 1 : 0);
+		uint8_t flags = _curr_reg->_AF.low() & FLAG::C;
+
+		--_curr_reg->_HL.value();
+		--_curr_reg->_BC.value();
+
+		if (result & 0x80)
+			flags |= FLAG::S;
+
+		if (result == 0)
+			flags |= FLAG::Z;
+
+		if (half_borrow)
+			flags |= FLAG::H;
+
+		flags |= adjusted & (FLAG::BIT3 | FLAG::BIT5);
+		_curr_reg->_AF.low(flags);
 		++_PC;
 		break;
+	}
 	case 0xaa:
 		// IND
 		++_PC;
