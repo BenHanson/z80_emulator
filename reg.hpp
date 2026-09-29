@@ -4,8 +4,8 @@
 class reg
 {
 public:
-    void high(const uint8_t value);
-    void low(const uint8_t value);
+    uint8_t high(const uint8_t value);
+    uint8_t low(const uint8_t value);
     [[nodiscard]] uint8_t high() const;
     [[nodiscard]] uint8_t low() const;
     void value(const uint16_t value);

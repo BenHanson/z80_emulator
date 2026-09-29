@@ -2,16 +2,18 @@
 
 #include <cstdint>
 
-void reg::high(const uint8_t value)
+uint8_t reg::high(const uint8_t value)
 {
 	_value &= 0x00ff;
 	_value |= value << 8;
+	return value;
 }
 
-void reg::low(const uint8_t value)
+uint8_t reg::low(const uint8_t value)
 {
 	_value &= 0xff00;
 	_value |= value;
+	return value;
 }
 
 uint8_t reg::high() const
