@@ -3810,9 +3810,49 @@ void z80::step_ext(uint8_t* memory)
 		break;
 	}
 	case 0xb1:
+	{
 		// CPIR
+		uint8_t result = 0;
+
+		do
+		{
+			const uint8_t value = memory[_curr_reg->_HL.value()];
+			uint8_t flags = 0;
+
+			result = _curr_reg->_AF.high() - value;
+			--_curr_reg->_BC.value();
+			++_curr_reg->_HL.value();
+			flags = FLAG::N;
+
+			if (result & 0x80)
+				flags |= FLAG::S;
+
+			if (result == 0)
+				flags |= FLAG::Z;
+
+			if ((_curr_reg->_AF.high() & 0x0F) < (value & 0x0F))
+				flags |= FLAG::H;
+
+			// CPIR's undocumented X/Y flags are based on
+			// the adjusted subtraction result.
+			uint8_t adj = result;
+
+			if (flags & FLAG::H)
+				--adj;
+
+			flags |= adj & (FLAG::BIT3 | FLAG::BIT5);
+
+			if (_curr_reg->_BC.value() != 0)
+				flags |= FLAG::PV;
+
+			// C is preserved by CPDR.
+			flags |= _curr_reg->_AF.low() & FLAG::C;
+			_curr_reg->_AF.low(flags);
+		} while (result != 0 && _curr_reg->_BC.value() != 0);
+
 		++_PC;
 		break;
+	}
 	case 0xb2:
 		// INIR
 		++_PC;
@@ -3822,13 +3862,78 @@ void z80::step_ext(uint8_t* memory)
 		++_PC;
 		break;
 	case 0xb8:
+	{
 		// LDDR
+		do
+		{
+			const uint8_t value = memory[_curr_reg->_HL.value()];
+
+			memory[_curr_reg->_DE.value()] = value;
+			--_curr_reg->_HL.value();
+			--_curr_reg->_DE.value();
+			--_curr_reg->_BC.value();
+
+			const uint8_t sum = _curr_reg->_AF.high() + value;
+			// Preserve S, Z and C.
+			uint8_t flags = _curr_reg->_AF.low() & (FLAG::S | FLAG::Z | FLAG::C);
+
+			// H and N are reset.
+			// P/V is set if BC is non-zero.
+			if (_curr_reg->_BC.value() != 0)
+				flags |= FLAG::PV;
+
+			// Undocumented X/Y flags.
+			flags |= sum & (FLAG::BIT3 | FLAG::BIT5);
+			_curr_reg->_AF.low(flags);
+		} while (_curr_reg->_BC.value() != 0);
+
 		++_PC;
 		break;
+	}
 	case 0xb9:
+	{
 		// CPDR
+		uint8_t result = 0;
+
+		do
+		{
+			const uint8_t value = memory[_curr_reg->_HL.value()];
+			uint8_t flags = 0;
+
+			result = _curr_reg->_AF.high() - value;
+			--_curr_reg->_BC.value();
+			--_curr_reg->_HL.value();
+			flags = FLAG::N;
+
+			if (result & 0x80)
+				flags |= FLAG::S;
+
+			if (result == 0)
+				flags |= FLAG::Z;
+
+			if ((_curr_reg->_AF.high() & 0x0F) < (value & 0x0F))
+				flags |= FLAG::H;
+
+			// CPDR's undocumented X/Y flags are based on
+			// the adjusted subtraction result.
+			uint8_t adj = result;
+
+			if (flags & FLAG::H)
+				--adj;
+
+			flags |= adj & (FLAG::BIT3 | FLAG::BIT5);
+
+			if (_curr_reg->_BC.value() != 0)
+				flags |= FLAG::PV;
+
+			// C is preserved by CPDR.
+			flags |= _curr_reg->_AF.low() & FLAG::C;
+			_curr_reg->_AF.low(flags);
+		} while (result != 0 && _curr_reg->_BC.value() != 0);
+
 		++_PC;
 		break;
+	}
 	case 0xba:
 		// INDR
 		++_PC;
